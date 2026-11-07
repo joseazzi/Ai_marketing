@@ -82,7 +82,7 @@ def agent():
         raise HTTPException(400, "No OpenAI key. Add OPENAI_API_KEY to .env or set it in Settings.")
     if _agent is None:
         from .agent import BudgetAgent
-        _agent = BudgetAgent(ws)
+        _agent = BudgetAgent(ws, tool_lock=lock)
     return _agent
 
 
@@ -378,8 +378,7 @@ def chat(c: Chat):
 
     def work():
         try:
-            with lock:
-                r = ag.ask(c.message, on_step=on_step)
+            r = ag.ask(c.message, on_step=on_step)  # holds the workspace lock only while a tool runs
             q.put({"type": "answer", "answer": r.answer, "plan": r.plan[-1] if r.plan else None,
                    "grounding": r.grounding, "revised": r.revised})
         except Exception as e:  # surface OpenAI/config errors to the UI

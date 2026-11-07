@@ -47,9 +47,6 @@ class Workspace:
     def __init__(self, root: str | Path = "workspace", recency_halflife: float | None = 78, mmm_maxiter: int = 60,
                  gross_margin: float | None = None):
         self.root = Path(root)
-        if gross_margin is None and os.getenv("GROSS_MARGIN"):
-            gross_margin = float(os.getenv("GROSS_MARGIN"))
-        self.gross_margin = gross_margin
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "plans").mkdir(exist_ok=True)
         self.recency_halflife = recency_halflife
@@ -64,6 +61,13 @@ class Workspace:
         if (self.root / "model.json").exists():
             self.model = MMM.load(self.root / "model.json")
         self.last_goal = self.memory.get("last_goal")
+        # gross margin: explicit argument > value saved from the UI/agent > GROSS_MARGIN in .env
+        if gross_margin is None:
+            if "gross_margin" in self.memory:
+                gross_margin = self.memory["gross_margin"]
+            elif os.getenv("GROSS_MARGIN"):
+                gross_margin = float(os.getenv("GROSS_MARGIN"))
+        self.gross_margin = gross_margin
 
     # ------------------------------------------------------------------ #
     # persistence
@@ -144,6 +148,7 @@ class Workspace:
         if gross_margin is not None and not 0 < gross_margin <= 1:
             return {"error": "gross_margin must be between 0 and 1 (e.g. 0.55 for 55%)."}
         self.gross_margin = gross_margin
+        self.memory["gross_margin"] = gross_margin  # survives restarts, like memory and plans
         self.log_event("gross_margin_set", gross_margin=gross_margin)
         return {"gross_margin": gross_margin, "breakeven_sales_per_ad_dollar": _r(self.breakeven, 3),
                 "meaning": f"A channel pays for itself only if $1 of ads brings at least ${self.breakeven:.2f} of sales."}
@@ -196,7 +201,8 @@ class Workspace:
                 "current_weekly_spend": _r(r.current_weekly_spend), "saturation_pct": _r(r.saturation_pct, 3),
                 "weekly_spend_where_next_dollar_stops_paying_off": _r(r.saturation_weekly_spend),
                 "ad_effect_lasts_weeks": _r(r.carryover_weeks, 1),
-                "status": ("saturated" if r.saturation_pct > SATURATION_ALERT or r.marginal_roi < self.breakeven
+                "status": ("saturated" if r.saturation_pct > SATURATION_ALERT
+                           else "below break-even" if r.marginal_roi < self.breakeven
                            else "room to grow"),
             })
             if self.gross_margin:
@@ -411,6 +417,10 @@ class Workspace:
         fit = self.fit_model()
         out = {"weeks_added": added, "data_now_ends": str(self.df[D.DATE_COL].max().date()),
                "previous_model_out_of_sample": oos, "refit": fit}
+        if "error" in fit or self.model is None:
+            out["warning"] = "New weeks were saved, but the model could not be retrained: " + fit.get("error", "")
+            self.log_event("new_data_ingested", weeks_added=added, alerts=0, refit_failed=True)
+            return out
 
         new_perf = {r["channel"]: r for r in self.get_channel_performance()["channels"]}
         out["channel_changes"] = {
@@ -421,14 +431,25 @@ class Workspace:
         }
 
         alerts = []
+        res = None
         if self.last_goal:
-            g = self.last_goal
-            res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
-                                       g.get("max_spend") or None, g.get("max_change_pct"),
-                                       g.get("goal", "max_sales"))
+            g = dict(self.last_goal)
+            attempts = [dict(goal=g.get("goal", "max_sales")), dict(goal="max_sales")]
+            for extra in attempts:  # the old goal can become impossible (e.g. margin removed, limits infeasible)
+                try:
+                    res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
+                                               g.get("max_spend") or None, g.get("max_change_pct"), **extra)
+                except (ValueError, RuntimeError) as e:
+                    res = {"error": str(e)}
+                if "error" not in res:
+                    break
             if "error" in res:
-                res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
-                                           g.get("max_spend") or None, g.get("max_change_pct"))
+                out["reoptimize_error"] = (f"The model was updated, but the last plan could not be re-optimized: "
+                                           f"{res['error']}. Run optimize_budget with new limits.")
+                self.last_goal = g
+                res = None
+        if res is not None:
+            g = self.last_goal
             new_alloc = res["recommended"]["allocation"]
             out["new_recommendation"] = {"allocation": new_alloc,
                                          "expected_incremental_sales": res["recommended"]["total_incremental_sales"]}

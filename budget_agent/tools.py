@@ -94,7 +94,7 @@ TOOLS = [
         "description": "LEARN: add new weekly results (csv_path, or demo_weeks from the demo stream), refit, "
                        "re-optimise the last goal and report what changed.",
         "parameters": {"type": "object", "properties": {
-            "csv_path": {"type": "string"},
+            "csv_path": {"type": "string", "description": "A .csv inside the workspace or data/ folder."},
             "demo_weeks": {"type": "integer", "description": "Number of new demo weeks to ingest."},
         }},
     },
@@ -117,12 +117,27 @@ def dispatch(ws: Workspace, name: str, args: dict, plan_sink: list | None = None
             if plan_sink is not None:
                 plan_sink.append({"goal": args.get("goal"), "steps": args.get("steps", [])})
             return {"ok": True, "message": "Plan recorded. Execute it step by step."}
+        if name == "ingest_new_data" and args.get("csv_path"):
+            args = {**args, "csv_path": _safe_csv(ws, args["csv_path"])}
         fn = getattr(ws, name, None)
         if fn is None or name not in {t["name"] for t in TOOLS}:
             return {"error": f"Unknown tool {name}"}
         return fn(**args)
     except Exception as e:  # surface the error to the model instead of crashing
         return {"error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc(limit=2)}
+
+
+def _safe_csv(ws: Workspace, path: str) -> str:
+    """The LLM may only read CSV files inside the workspace or the project's data/ folder."""
+    from pathlib import Path
+    p = Path(path)
+    roots = [ws.root.resolve(), (Path(__file__).resolve().parent.parent / "data").resolve()]
+    candidates = [p] if p.is_absolute() else [r / p for r in roots] + [p]
+    for c in candidates:
+        c = c.resolve()
+        if c.suffix.lower() == ".csv" and c.is_file() and any(r == c.parent or r in c.parents for r in roots):
+            return str(c)
+    raise ValueError("csv_path must be a .csv file inside the workspace or the data/ folder.")
 
 
 def to_json(obj) -> str:

@@ -96,7 +96,9 @@ def optimize(
     hi = np.array([float((max_spend or {}).get(c, total_budget)) for c in chans])
     if max_change_vs and max_change_pct is not None:
         ref = np.array([max_change_vs.get(c, 0.0) for c in chans])
-        lo = np.maximum(lo, ref * (1 - max_change_pct))
+        if goal == "max_sales":
+            lo = np.maximum(lo, ref * (1 - max_change_pct))
+        # in profit mode the limit only caps increases: never force spending on a channel that loses money
         hi = np.minimum(hi, ref * (1 + max_change_pct))
     hi = np.minimum(hi, total_budget)
     if lo.sum() > total_budget + 1e-6:

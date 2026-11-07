@@ -276,7 +276,7 @@ with tabs[3]:
         c = st.columns(3)
         budget = c[0].number_input("Total budget ($)", 1000, 100_000_000, 100_000, step=5000)
         weeks = c[1].number_input("Period (weeks)", 1, 52, 13)
-        mc = c[2].number_input("Max change per channel vs current (%, 0 = no limit)", 0, 500, 0)
+        mc = c[2].number_input("Max change per channel vs current (%, 0 = no limit)", 0, 500, 30)
         goal = st.radio("Goal", ["Maximize sales (spend the full budget)", "Maximize profit (budget is a cap)"],
                         horizontal=True, disabled=not ws.gross_margin,
                         help="Profit mode needs a gross margin in the sidebar.")

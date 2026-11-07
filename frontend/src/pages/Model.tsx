@@ -133,7 +133,7 @@ function ModelView() {
             pct(c.saturation_pct, 0), money(c.current_weekly_spend),
             c.weekly_spend_where_next_dollar_stops_paying_off == null ? '—' : c.weekly_spend_where_next_dollar_stops_paying_off === 0 ? 'never pays off' : `${money(c.weekly_spend_where_next_dollar_stops_paying_off)}/wk`,
             `${num(c.ad_effect_lasts_weeks, 1)} wk`,
-            <Badge tone={c.status === 'saturated' ? 'amber' : 'green'}>{c.status}</Badge>,
+            <Badge tone={c.status === 'saturated' ? 'amber' : c.status === 'below break-even' ? 'red' : 'green'}>{c.status}</Badge>,
           ])} />
       </Card>
     </div>

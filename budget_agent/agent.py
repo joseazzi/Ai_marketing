@@ -9,9 +9,11 @@ Loop per user message:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -38,7 +40,9 @@ How you work:
    estimate figures yourself. Round sensibly ($23.4K, 15%). If the model fit is weak, say so.
 7. PROFIT: revenue ROI above 1 does not mean an ad pays off. If the user gives a gross margin, call set_gross_margin
    and use goal="max_profit" when they care about profit. If no margin is set, say figures are revenue, not profit.
-8. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
+8. REALISM: if a plan without limits sets a channel to $0 or more than doubles one, say it is an aggressive plan
+   and offer the version with max_change_pct=0.3 (each channel within +/-30% of today).
+9. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
 """
 
 
@@ -70,8 +74,15 @@ def _strip_meta(text: str) -> str:
 
 class BudgetAgent:
     def __init__(self, workspace: Workspace, model: str | None = None, api_key: str | None = None,
-                 max_tool_rounds: int = 15, client=None):
+                 max_tool_rounds: int = 15, client=None, tool_lock=None, max_turns_kept: int = 6,
+                 old_tool_chars: int = 1500):
         self.ws = workspace
+        # tool_lock guards the shared workspace while a tool runs (not while the LLM thinks);
+        # chat_lock serialises conversations on this agent so its message history stays consistent.
+        self.tool_lock = tool_lock or contextlib.nullcontext()
+        self.chat_lock = threading.Lock()
+        self.max_turns_kept = max_turns_kept
+        self.old_tool_chars = old_tool_chars
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-5-mini")
         self.max_tool_rounds = max_tool_rounds
         if client is None:
@@ -100,8 +111,28 @@ class BudgetAgent:
     def _complete(self):
         return self.client.chat.completions.create(model=self.model, messages=self.messages, tools=openai_tools())
 
+    def _compact_history(self) -> None:
+        """Keep the conversation bounded: one current state note, short old tool outputs, last N turns."""
+        msgs = [self.messages[0]] + [m for m in self.messages[1:]
+                                     if not (m["role"] == "system" and m["content"].startswith("[workspace state]"))]
+        for m in msgs:
+            if m["role"] == "tool" and len(m["content"]) > self.old_tool_chars:
+                m["content"] = m["content"][: self.old_tool_chars] + ' ... [truncated: older result]"'
+        turns = [i for i, m in enumerate(msgs) if m["role"] == "user" and not m["content"].startswith("[internal check")]
+        keep = max(self.max_turns_kept - 1, 0)  # previous turns kept; the new question makes it max_turns_kept
+        if len(turns) > keep:
+            msgs = [msgs[0]] + (msgs[turns[-keep]:] if keep else [])
+        self.messages = msgs
+
     def ask(self, user_message: str, on_step=None) -> AgentResponse:
-        self.messages.append({"role": "system", "content": self._context_note()})
+        with self.chat_lock:
+            return self._ask(user_message, on_step)
+
+    def _ask(self, user_message: str, on_step=None) -> AgentResponse:
+        self._compact_history()
+        with self.tool_lock:
+            note = self._context_note()
+        self.messages.append({"role": "system", "content": note})
         self.messages.append({"role": "user", "content": user_message})
         plan: list[dict] = []
         steps: list[AgentStep] = []
@@ -125,7 +156,8 @@ class BudgetAgent:
                     except json.JSONDecodeError:
                         args = {}
                     t0 = time.time()
-                    result = dispatch(self.ws, tc.function.name, args, plan_sink=plan)
+                    with self.tool_lock:
+                        result = dispatch(self.ws, tc.function.name, args, plan_sink=plan)
                     step = AgentStep(tc.function.name, args, result, time.time() - t0)
                     steps.append(step)
                     tool_results.append(result)

@@ -72,7 +72,7 @@ function Evaluation() {
               <div className="grid gap-4 sm:grid-cols-3">
                 <Stat label="Current split" value={compact(ev.business_value.current_sales)} />
                 <Stat label="Optimized split" value={compact(ev.business_value.optimized_sales)} />
-                <Stat label="Expected uplift" value={money(ev.business_value.uplift)} delta={pct(ev.business_value.uplift_pct, 1, true)} tone="up" />
+                <Stat label="Expected uplift" value={money(ev.business_value.uplift)} delta={pct(ev.business_value.uplift_pct, 1, true)} tone={ev.business_value.uplift >= 0 ? 'up' : 'down'} />
               </div>
             </>
           )}

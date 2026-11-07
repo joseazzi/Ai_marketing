@@ -7,7 +7,7 @@ An AI agent that decides how to split a marketing budget across channels so each
 | **Plans in steps by itself.** Before any work it writes a plan (`make_plan`): check the data, fit the model, compare scenarios, then recommend. If a step fails, it changes the plan. | `budget_agent/agent.py`, `autopilot.py` |
 | **Acts.** It writes a ready-to-use budget plan (weekly spend per channel as CSV, plus a one-page brief) and sends **saturation alerts** to a log, Slack, a webhook or email. | `workspace.generate_budget_plan`, `check_saturation_alerts`, `notifier.py` |
 | **Learns from new data.** When new weekly results arrive, it checks how accurate its last forecast was, updates the model (warm start plus a prior on the previous estimates), re-optimizes the last goal, reports what changed and raises an alert if the plan moved. | `workspace.ingest_new_data`, `autopilot.weekly_update` |
-| **Checks its own numbers.** A grounding check confirms that every figure in the answer appears in a tool result. If one doesn't, the agent rewrites the answer once. | `grounding.py` |
+| **Checks its own numbers.** Every figure in the answer must match a tool result, allowing only for the rounding actually written, fractions shown as %, and per-week values. If one doesn't match, the agent rewrites the answer once. See [What the number check guarantees](#what-the-number-check-guarantees). | `grounding.py` |
 | **Remembers.** Past recommendations, model versions, events and alerts persist in `workspace/memory.json`. | `workspace.py` |
 
 ## Quick start
@@ -77,7 +77,7 @@ python scripts/prepare_conjura.py conjura_mmm_data.csv --list
 python scripts/prepare_conjura.py conjura_mmm_data.csv --brand <id> -o data/my_brand.csv
 ```
 
-Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget, the optimized plan gives **+7.7%** expected sales (+5.5% at ±20%). Without limits the model suggests much larger moves. Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included. I also tested adding the brand's direct, organic-search and email clicks as extra drivers. Every combination made the holdout prediction slightly worse (R² 0.88–0.89 vs 0.90), so they aren't used. Ads partly cause those visits, so they aren't true outside factors.
+Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget (the default in the web app), the optimized plan gives **+7.3%** expected sales. Without limits the model suggests much larger moves (+46%, with Google Search and Facebook cut to $0 and 64% of the budget on Instagram; at $100K even +142%). Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included. I also tested adding the brand's direct, organic-search and email clicks as extra drivers. Every combination made the holdout prediction slightly worse (R² 0.88–0.89 vs 0.90), so they aren't used. Ads partly cause those visits, so they aren't true outside factors.
 
 ### Data still missing (needs the partner company)
 
@@ -108,6 +108,14 @@ app.py         → older Streamlit dashboard
 
 **Saturation point** = the weekly spend beyond which the next $1 returns less than $1 in sales.
 
+## What the number check guarantees
+
+`grounding.py` checks that every figure in the agent's answer was **copied from a tool result**, not invented. It does **not** check whether the agent's reasoning about those numbers is right.
+
+A figure is accepted only if it equals a tool value, allowing for the rounding actually written ("$23.4K" may differ by up to $50, "$23K" by up to $500), a fraction shown as a percentage, a period total shown per week, or a sign change. Sums or differences the agent computes itself are flagged, and the agent then uses a tool value instead. Years, "13 weeks", "Q1" and list numbers are skipped; all other numbers are checked.
+
+How strict it is, measured against realistic tool outputs (600 invented figures): about 2–4% of invented dollar amounts slip through by coincidence. Percentages and ratios written with one decimal slip through more often (about 15%), because tool outputs contain dozens of small values (ROIs, saturation levels) that a random figure can land on. Real figures from tool outputs are all accepted. An earlier version that also accepted sums and differences of value pairs let about 80% of invented figures through.
+
 ## Profit mode (gross margin)
 
 An ROI of 2.0 sounds good, but at a 40% gross margin each $1 of ads only brings back $0.80 of profit. Set the margin in the sidebar, in `.env` (`GROSS_MARGIN=0.55`), or tell the agent ("our margin is 55%"). Once it's set:
@@ -118,7 +126,11 @@ An ROI of 2.0 sounds good, but at a 40% gross margin each $1 of ads only brings 
 
 There's no default margin. A real margin has to come from the company, because public benchmarks vary too much (general retail is around 33%).
 
-On the real brand, with each channel limited to ±30%, the result depends heavily on the margin. At 40% the current split *loses* $11K of profit over a quarter, and the profit plan makes +$57K while spending $427K of the $500K. At 55%, the current split makes $172K and the profit plan $238K. Facebook and Google Search don't pay for themselves at any margin from 40% to 70%.
+In profit mode a "max change" limit only caps *increases*. Cuts are always allowed, so the plan is never forced to keep spending on a channel that loses money.
+
+On the real brand ($500K quarter, increases capped at +30%), the result depends heavily on the margin. At 40% the current split *loses* $11K of profit over a quarter, while the profit plan makes $139K and spends only $211K. At 55%, the current split makes $172K and the profit plan $279K. At 70%, it's $355K vs $431K. Facebook and Google Search don't pay for themselves at any margin from 40% to 70%, so the profit plan cuts them to $0.
+
+The margin you enter in Settings (or give the agent) is saved in the workspace and survives restarts. It takes priority over `GROSS_MARGIN` in `.env`.
 
 ## Results on the demo data (reproducible: `python -m budget_agent.cli evaluate`)
 

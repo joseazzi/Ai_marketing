@@ -18,7 +18,7 @@ function Optimizer() {
   const chans = state!.channels
   const [budget, setBudget] = useState(100000)
   const [weeks, setWeeks] = useState(13)
-  const [maxChange, setMaxChange] = useState('')
+  const [maxChange, setMaxChange] = useState('30')
   const [goal, setGoal] = useState<'max_sales' | 'max_profit'>('max_sales')
   const [mins, setMins] = useState<Record<string, string>>({})
   const [maxs, setMaxs] = useState<Record<string, string>>({})
@@ -55,7 +55,7 @@ function Optimizer() {
               <Field label="Total budget ($)"><input type="number" className={inputCls} value={budget} onChange={(e) => setBudget(+e.target.value)} /></Field>
               <Field label="Period (weeks)" hint="A quarter = 13"><input type="number" className={inputCls} value={weeks} onChange={(e) => setWeeks(+e.target.value)} /></Field>
             </div>
-            <Field label="Max change per channel (%)" hint="Keeps the plan realistic, e.g. 30. Empty = no limit.">
+            <Field label="Max change per channel (%)" hint={goal === 'max_profit' ? 'Caps increases. Cuts are always allowed in profit mode, so no channel is forced to lose money.' : 'Each channel stays within ±this % of today. Empty = no limit (often unrealistic).'}>
               <input type="number" className={inputCls} placeholder="no limit" value={maxChange} onChange={(e) => setMaxChange(e.target.value)} />
             </Field>
             <div>
