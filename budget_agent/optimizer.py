@@ -190,8 +190,25 @@ def compare(plans: list[Plan]) -> list[dict]:
     return out
 
 
-def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int = 3) -> list[dict]:
-    """Model-grounded reasons for the biggest budget moves (used by agent + autopilot)."""
+def _reason(d: float, new_alloc: float, saturation: float, breakeven: float) -> str:
+    profit = breakeven > 1.0
+    if d >= 0:
+        return ("pays for itself with room to grow: the next dollar still brings back more than "
+                f"${breakeven:.2f}" if profit else "room to grow: high marginal return and not yet saturated")
+    if new_alloc <= 1e-6:
+        return (f"never pays for itself at this margin: at any spend level, $1 brings back less than ${breakeven:.2f} "
+                "in sales (the break-even)" if profit else "low marginal return compared with other channels")
+    if saturation > 0.6 and not profit:
+        return "saturated: the next dollar returns little, so budget moves out"
+    if profit:
+        return f"cut back to the level where the next $1 still brings back ${breakeven:.2f} (the break-even)"
+    return "low marginal return compared with other channels"
+
+
+def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int = 3, breakeven: float = 1.0) -> list[dict]:
+    """Model-grounded reasons for the biggest budget moves (used by agent + autopilot).
+
+    ``breakeven`` > 1 means the plan maximises profit (break-even = 1 / gross margin)."""
     moves = []
     for ch in model.channels:
         d = optimized.allocation[ch] - current.allocation[ch]
@@ -202,12 +219,7 @@ def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int = 3) -> 
             "current_marginal_roi": round(current.marginal_roi[ch], 3),
             "optimized_marginal_roi": round(optimized.marginal_roi[ch], 3),
             "current_saturation_pct": round(current.saturation_pct[ch], 3),
-            "reason": (
-                "saturated: the next dollar returns little, so budget moves out"
-                if d < 0 and current.saturation_pct[ch] > 0.6 else
-                "low marginal return compared with other channels" if d < 0 else
-                "room to grow: high marginal return and not yet saturated"
-            ),
+            "reason": _reason(d, optimized.allocation[ch], current.saturation_pct[ch], breakeven),
         })
     moves.sort(key=lambda m: abs(m["change"]), reverse=True)
     return moves[:top]
