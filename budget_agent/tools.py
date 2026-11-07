@@ -40,13 +40,18 @@ TOOLS = [
     },
     {
         "name": "get_channel_performance",
-        "description": "Per-channel ROI, marginal ROI of the next dollar, saturation level, carry-over and status.",
+        "description": "HISTORICAL per-channel ROI, next-dollar return at recent historical spend, saturation, "
+                       "carry-over and status. Not for explaining a budget plan: use optimize_budget's fields for that.",
         "parameters": {"type": "object", "properties": {}},
     },
     {
         "name": "optimize_budget",
-        "description": "Find the budget split that maximises incremental sales for a total budget over n_weeks, "
-                       "compared against the current split. Stores scenarios 'recommended' and 'current split'.",
+        "description": "Find the budget split that maximises incremental sales (or profit) for a total budget over "
+                       "n_weeks, compared against the current split. Stores scenarios 'recommended' and 'current split'. "
+                       "biggest_moves lists every channel that changes by more than 5%, with its direction and reason. "
+                       "max_change_pct: with goal='max_sales' every channel stays within +/-max_change_pct; with "
+                       "goal='max_profit' it only caps increases, and cuts are always allowed so no channel is forced "
+                       "to lose money (there is no option to enforce the limit on cuts in profit mode).",
         "parameters": {"type": "object", "properties": {
             "total_budget": {"type": "number"},
             "n_weeks": {"type": "integer", "description": "Planning period in weeks (a quarter = 13).", "default": 13},

@@ -112,9 +112,9 @@ app.py         → older Streamlit dashboard
 
 `grounding.py` checks that every figure in the agent's answer was **copied from a tool result**, not invented. It does **not** check whether the agent's reasoning about those numbers is right.
 
-A figure is accepted only if it equals a tool value, allowing for the rounding actually written ("$23.4K" may differ by up to $50, "$23K" by up to $500), a fraction shown as a percentage, a period total shown per week, or a sign change. Sums or differences the agent computes itself are flagged, and the agent then uses a tool value instead. Years, "13 weeks", "Q1" and list numbers are skipped; all other numbers are checked.
+A figure is accepted only if it equals a tool value, allowing for the rounding actually written ("$23.4K" may differ by up to $50, "$23K" by up to $500), a fraction shown as a percentage, a period total shown per week, or a sign change. Sums or differences the agent computes itself are flagged, and the agent then uses a tool value instead. Years, "13 weeks", "Q1", list numbers and plain integers up to 12 are skipped; all other numbers are checked. English and French number formats are both read: "84,186.52", "84 186,52 $" (space, no-break or narrow no-break space as thousands separator), "0,462", "15,8K". An ambiguous "1,500" counts if either 1500 or 1.5 matches, but "$1,500" is always 1500.
 
-How strict it is, measured against realistic tool outputs (600 invented figures): about 2–4% of invented dollar amounts slip through by coincidence. Percentages and ratios written with one decimal slip through more often (about 15%), because tool outputs contain dozens of small values (ROIs, saturation levels) that a random figure can land on. Real figures from tool outputs are all accepted. An earlier version that also accepted sums and differences of value pairs let about 80% of invented figures through.
+How strict it is, measured against realistic tool outputs with 600 invented figures in each language: invented dollar amounts almost never slip through (about 0–1%). Percentages and ratios written with one or two decimals slip through more often (about 15%), because tool outputs contain dozens of small values (ROIs, saturation levels) that a random figure can land on. Real figures from tool outputs are all accepted, in either format. An earlier version that also accepted sums and differences of value pairs, with a 0.1% tolerance, let about 80% of invented figures through.
 
 ## Profit mode (gross margin)
 
@@ -126,7 +126,9 @@ An ROI of 2.0 sounds good, but at a 40% gross margin each $1 of ads only brings 
 
 There's no default margin. A real margin has to come from the company, because public benchmarks vary too much (general retail is around 33%).
 
-In profit mode a "max change" limit only caps *increases*. Cuts are always allowed, so the plan is never forced to keep spending on a channel that loses money.
+In profit mode a "max change" limit only caps *increases*. Cuts are always allowed, so the plan is never forced to keep spending on a channel that loses money. The optimizer's result says so (`change_limit_rule`), so the agent explains a deeper cut instead of calling it an inconsistency. To keep every channel within ±the limit, use the sales goal.
+
+To explain a plan, the agent uses only the optimizer's own figures: `biggest_moves` lists every channel whose budget changes by more than 5%, with its direction, current and recommended amounts, and reason. The next-dollar returns there are computed at each plan's spend for your budget. The **Channel insights** figures (`marginal_roi_now`) are historical, measured at recent past spend, and the agent labels them as such when it quotes them.
 
 On the real brand ($500K quarter, increases capped at +30%), the result depends heavily on the margin. At 40% the current split *loses* $11K of profit over a quarter, while the profit plan makes $139K and spends only $211K. At 55%, the current split makes $172K and the profit plan $279K. At 70%, it's $355K vs $431K. Facebook and Google Search don't pay for themselves at any margin from 40% to 70%, so the profit plan cuts them to $0.
 

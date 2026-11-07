@@ -207,15 +207,26 @@ def _reason(d: float, new_alloc: float, saturation: float, breakeven: float) -> 
     return "low marginal return compared with other channels"
 
 
-def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int = 3, breakeven: float = 1.0) -> list[dict]:
-    """Model-grounded reasons for the biggest budget moves (used by agent + autopilot).
+def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int | None = None, breakeven: float = 1.0,
+                   min_change_pct: float = 0.05) -> list[dict]:
+    """Model-grounded reasons for the budget moves (used by agent, autopilot and briefs).
 
-    ``breakeven`` > 1 means the plan maximises profit (break-even = 1 / gross margin)."""
+    Returns EVERY channel whose allocation changed by more than ``min_change_pct`` of its current budget
+    (or that goes from $0 to a positive budget), largest move first, so nobody has to guess the direction.
+    ``top`` optionally caps the list. ``breakeven`` > 1 means the plan maximises profit (= 1 / gross margin).
+    Marginal returns here are computed at the plan's own spend levels (current split scaled to the budget,
+    and the recommended split), not at historical spend."""
     moves = []
     for ch in model.channels:
-        d = optimized.allocation[ch] - current.allocation[ch]
+        cur_a, new_a = current.allocation[ch], optimized.allocation[ch]
+        d = new_a - cur_a
+        if abs(d) <= max(min_change_pct * cur_a, 1.0):
+            continue
         moves.append({
             "channel": ch,
+            "direction": "increase" if d > 0 else "decrease",
+            "current_allocation": round(cur_a, 2),
+            "recommended_allocation": round(new_a, 2),
             "change": round(d, 2),
             "change_pct": round(d / current.allocation[ch], 3) if current.allocation[ch] else None,
             "current_marginal_roi": round(current.marginal_roi[ch], 3),
@@ -224,4 +235,4 @@ def explain_shifts(model: MMM, current: Plan, optimized: Plan, top: int = 3, bre
             "reason": _reason(d, optimized.allocation[ch], current.saturation_pct[ch], breakeven),
         })
     moves.sort(key=lambda m: abs(m["change"]), reverse=True)
-    return moves[:top]
+    return moves[:top] if top else moves
