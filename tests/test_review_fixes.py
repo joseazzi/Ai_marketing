@@ -128,3 +128,38 @@ def test_profit_mode_can_cut_below_max_change(demo_ws):
 def _no_alert_network(monkeypatch):
     for k in ("SLACK_WEBHOOK_URL", "ALERT_WEBHOOK_URL", "SMTP_HOST"):
         monkeypatch.delenv(k, raising=False)
+
+
+def test_fallback_keeps_original_goal(tmp_path):
+    ws = Workspace(tmp_path, mmm_maxiter=15)
+    ws.init_demo()
+    ws.fit_model()
+    ws.set_gross_margin(0.5)
+    ws.optimize_budget(100_000, 13, goal="max_profit")
+    ws.gross_margin = None  # profit goal becomes impossible for this ingest
+    out = ws.ingest_new_data(demo_weeks=2)
+    assert "goal_fallback" in out and "new_recommendation" in out
+    assert ws.last_goal["goal"] == "max_profit"
+    assert Workspace(tmp_path).last_goal["goal"] == "max_profit"  # also persisted
+
+
+def test_reset_waits_for_running_answer(demo_ws):
+    import time
+    started, release = threading.Event(), threading.Event()
+
+    class Slow:
+        def __init__(self):
+            self.chat = NS(completions=NS(create=self.create))
+
+        def create(self, model, messages, tools):
+            started.set(); release.wait(5)
+            return NS(choices=[NS(message=NS(content="answer", tool_calls=None))])
+
+    agent = BudgetAgent(demo_ws, client=Slow())
+    t = threading.Thread(target=agent.ask, args=("q",)); t.start()
+    started.wait(5)
+    r = threading.Thread(target=agent.reset); r.start()
+    time.sleep(0.2)
+    assert r.is_alive()  # reset is waiting, not editing the history mid-answer
+    release.set(); t.join(5); r.join(5)
+    assert agent.messages == agent.messages[:1]

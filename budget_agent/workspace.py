@@ -434,7 +434,8 @@ class Workspace:
         res = None
         if self.last_goal:
             g = dict(self.last_goal)
-            attempts = [dict(goal=g.get("goal", "max_sales")), dict(goal="max_sales")]
+            wanted = g.get("goal", "max_sales")
+            attempts = [dict(goal=wanted)] + ([dict(goal="max_sales")] if wanted != "max_sales" else [])
             for extra in attempts:  # the old goal can become impossible (e.g. margin removed, limits infeasible)
                 try:
                     res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
@@ -442,7 +443,12 @@ class Workspace:
                 except (ValueError, RuntimeError) as e:
                     res = {"error": str(e)}
                 if "error" not in res:
+                    if extra["goal"] != wanted:
+                        out["goal_fallback"] = (f"The '{wanted}' goal was not possible this week, so this plan "
+                                                f"maximises sales. Your goal stays '{wanted}' for next weeks.")
                     break
+            self.last_goal = g  # keep the user's original goal (a one-week fallback must not replace it)
+            self._save_memory()
             if "error" in res:
                 out["reoptimize_error"] = (f"The model was updated, but the last plan could not be re-optimized: "
                                            f"{res['error']}. Run optimize_budget with new limits.")

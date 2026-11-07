@@ -77,7 +77,7 @@ python scripts/prepare_conjura.py conjura_mmm_data.csv --list
 python scripts/prepare_conjura.py conjura_mmm_data.csv --brand <id> -o data/my_brand.csv
 ```
 
-Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget (the default in the web app), the optimized plan gives **+7.3%** expected sales. Without limits the model suggests much larger moves (+46%, with Google Search and Facebook cut to $0 and 64% of the budget on Instagram; at $100K even +142%). Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included. I also tested adding the brand's direct, organic-search and email clicks as extra drivers. Every combination made the holdout prediction slightly worse (R² 0.88–0.89 vs 0.90), so they aren't used. Ads partly cause those visits, so they aren't true outside factors.
+Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.4%** (with the app's default weighting of recent weeks; 8.6% without it). For a $500K quarter with each channel limited to ±30% of its current budget (the default in the web app), the optimized plan gives **+7.3%** expected sales. Without limits the model suggests much larger moves (+46%, with Google Search and Facebook cut to $0 and 64% of the budget on Instagram; at $100K even +142%). Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included. I also tested adding the brand's direct, organic-search and email clicks as extra drivers. Every combination made the holdout prediction slightly worse (R² 0.88–0.89 vs 0.90), so they aren't used. Ads partly cause those visits, so they aren't true outside factors.
 
 ### Data still missing (needs the partner company)
 
@@ -85,7 +85,7 @@ Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAP
 |---|---|
 | Gross margin | Turns revenue into profit (see Profit mode) |
 | Offline spend (TV, radio, print, out-of-home) | The real brand is online-only, so TV/radio exist only in the simulated data |
-| Prices, competitor activity, stock-outs, product launches | Non-ad drivers. Without them the model gives ads too much credit (about 94% of sales here) |
+| Prices, competitor activity, stock-outs, product launches | Non-ad drivers. Without them the model gives ads too much credit (about 92% of sales here; 94% without recency weighting) |
 | Lift tests / experiments | The only way to check each channel's ROI on real data, not just overall accuracy |
 
 ## How it works

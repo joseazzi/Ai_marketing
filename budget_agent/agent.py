@@ -183,4 +183,5 @@ class BudgetAgent:
         return AgentResponse(answer, plan, steps, check, revised)
 
     def reset(self) -> None:
-        self.messages = self.messages[:1]
+        with self.chat_lock:  # waits for an answer in progress instead of mixing histories
+            self.messages = self.messages[:1]

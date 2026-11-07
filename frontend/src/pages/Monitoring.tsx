@@ -62,6 +62,11 @@ function Monitoring() {
 
       {res && (
         <div className="space-y-6 fade-in">
+          {[res.warning, res.reoptimize_error, res.goal_fallback].filter(Boolean).map((m: string) => (
+            <div key={m} className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />{m}
+            </div>
+          ))}
           <div className="grid gap-4 sm:grid-cols-3">
             <Stat label="Weeks added" value={res.weeks_added} delta={`data now ends ${res.data_now_ends}`} />
             {res.previous_model_out_of_sample && <Stat label="Last model's error on the new weeks" value={pct(res.previous_model_out_of_sample.mape)} hint="Forecast made before seeing these weeks" tone="neutral" />}
