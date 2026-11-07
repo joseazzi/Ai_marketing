@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -56,6 +57,15 @@ class AgentResponse:
     steps: list[AgentStep] = field(default_factory=list)
     grounding: dict = field(default_factory=dict)
     revised: bool = False
+
+
+def _strip_meta(text: str) -> str:
+    """Drop a leading line like 'Rewritten using only numbers from tool outputs.' if the model adds one."""
+    lines = text.lstrip().splitlines()
+    if lines and re.match(r"^\W*(rewritten|revised|corrected|updated answer|here is the (rewritten|revised|corrected))",
+                          lines[0], re.I):
+        lines = lines[1:]
+    return "\n".join(lines).lstrip()
 
 
 class BudgetAgent:
@@ -130,10 +140,12 @@ class BudgetAgent:
         revised = False
         if not check["passed"] and tool_results:
             self.messages.append({"role": "user", "content": (
-                "[automatic grounding check] These figures in your answer do not appear in any tool result: "
-                f"{check['ungrounded']}. Rewrite the answer using only numbers from tool results "
-                "(call tools again if you need a number). Do not mention this check.")})
-            answer = run_loop()
+                "[internal check, invisible to the user] These figures in your last answer do not match any tool "
+                f"result: {check['ungrounded']}. Write the answer again for the user: fix or remove only those "
+                "figures (call tools again if you need a number), keep the same structure, plain business language "
+                "and sensible rounding ($23.4K, 15%), and never show raw field names. Start directly with the answer: "
+                "do not say it was rewritten, checked or corrected.")})
+            answer = _strip_meta(run_loop())
             check = grounding.check(answer, tool_results)
             revised = True
         return AgentResponse(answer, plan, steps, check, revised)

@@ -52,3 +52,9 @@ def test_grounding_flags_invented_numbers():
     g = grounding.check("Uplift of $12.3K at ROI 2.31, plus a made-up 47% gain.", res)
     assert "47%" in g["ungrounded"]
     assert "$12.3K" in g["grounded"] and "2.31" in g["grounded"]
+
+
+def test_strip_meta_line():
+    from budget_agent.agent import _strip_meta
+    assert _strip_meta("Rewritten using only numbers from tool outputs.\nSummary") == "Summary"
+    assert _strip_meta("Recommended split: ...") == "Recommended split: ..."
