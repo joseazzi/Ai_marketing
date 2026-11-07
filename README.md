@@ -52,6 +52,18 @@ date,sales,spend_facebook,spend_instagram,spend_google_ads,spend_tv,spend_radio,
 - `spend_<channel>` columns define the channels. Use as many as you like.
 - Any other numeric column (`holiday`, `promo`, `price_index`, ...) is treated as an external control, so ads aren't credited for sales they didn't cause.
 - `data/demo_company.csv` is a 156-week example. `data/new_weeks_example.csv` holds 8 later weeks for testing the learning loop.
+- `data/real_apparel_brand_usd.csv` contains **real data**: 146 weeks (Aug 2021 to May 2024) for an anonymised US apparel brand, with spend on Google Search, Google Performance Max, Facebook, Instagram and other paid channels. Sales = net revenue (list price minus discounts). Controls: holiday weeks and the weekly discount rate.
+
+### Real data source
+
+The real data comes from the public **Conjura "Multi-Region Marketing Mix Modeling (MMM) Dataset for Several eCommerce Brands"** ([Figshare 25314841](https://figshare.com/articles/dataset/Multi-Region_Marketing_Mix_Modeling_MMM_Dataset_for_Several_eCommerce_Brands/25314841)): anonymised daily data for many brands. `scripts/prepare_conjura.py` converts it to our format:
+
+```bash
+python scripts/prepare_conjura.py conjura_mmm_data.csv --list
+python scripts/prepare_conjura.py conjura_mmm_data.csv --brand <id> -o data/my_brand.csv
+```
+
+Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget, the optimized plan gives **+7.7%** expected sales (+5.5% at ±20%). Without limits the model suggests much larger moves. Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included.
 
 ## How it works
 

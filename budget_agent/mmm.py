@@ -73,6 +73,7 @@ class MMM:
     n_fourier: int = 2
     seed: int = 0
     maxiter: int = 60
+    min_baseline_share: float = 0.3  # prior: at least this share of average sales is organic (not ads)
 
     # learned
     channels: list[str] = field(default_factory=list)
@@ -150,7 +151,7 @@ class MMM:
 
         lb = np.r_[np.full(n_base, -np.inf), np.zeros(len(self.channels))]
         ub = np.full(n_base + len(self.channels), np.inf)
-        lb[0] = 0.0  # non-negative intercept
+        lb[0] = self.min_baseline_share  # intercept floor (sales are normalised to mean 1)
 
         n_lin = n_base + len(self.channels)
         if prior is not None:
