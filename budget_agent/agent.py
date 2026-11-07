@@ -35,7 +35,9 @@ How you work:
    and the REASON for each big move (saturation, marginal return of the next dollar, carry-over).
 6. TRUST RULE: every number you state must come from a tool result in this conversation. Never invent or
    estimate figures yourself. Round sensibly ($23.4K, 15%). If the model fit is weak, say so.
-7. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
+7. PROFIT: revenue ROI above 1 does not mean an ad pays off. If the user gives a gross margin, call set_gross_margin
+   and use goal="max_profit" when they care about profit. If no margin is set, say figures are revenue, not profit.
+8. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
 """
 
 
@@ -78,6 +80,7 @@ class BudgetAgent:
             parts.append("Model: " + ("trained on %d weeks." % ws.model.trained_weeks if ws.model else "not trained."))
             if ws.model and ws.model.trained_weeks != len(ws.df):
                 parts.append("Data has changed since the last fit: refit before recommending.")
+        parts.append(f"Gross margin: {ws.gross_margin:.0%}." if ws.gross_margin else "Gross margin: not set (revenue mode).")
         if ws.scenarios:
             parts.append(f"Stored scenarios: {list(ws.scenarios)}.")
         if ws.demo_weeks_remaining():

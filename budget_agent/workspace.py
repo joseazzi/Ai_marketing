@@ -9,6 +9,7 @@ what changed.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,7 +22,6 @@ from .notifier import read_alerts, send_alerts
 from .optimizer import Plan, compare, current_allocation, evaluate_plan, explain_shifts, optimize, what_if
 
 SATURATION_ALERT = 0.70     # share of max effect already reached
-MROI_ALERT = 1.0            # next $1 returns less than $1 of sales
 SHIFT_ALERT = 0.10          # recommendation moved by >10% of the channel's budget
 
 DEMO_SHIFT_WEEK = 160
@@ -40,8 +40,12 @@ def _r(x, n=2):
 
 
 class Workspace:
-    def __init__(self, root: str | Path = "workspace", recency_halflife: float | None = 78, mmm_maxiter: int = 60):
+    def __init__(self, root: str | Path = "workspace", recency_halflife: float | None = 78, mmm_maxiter: int = 60,
+                 gross_margin: float | None = None):
         self.root = Path(root)
+        if gross_margin is None and os.getenv("GROSS_MARGIN"):
+            gross_margin = float(os.getenv("GROSS_MARGIN"))
+        self.gross_margin = gross_margin
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "plans").mkdir(exist_ok=True)
         self.recency_halflife = recency_halflife
@@ -111,6 +115,14 @@ class Workspace:
         s = D.load_csv(self.root / "demo_stream.csv")
         return s[s[D.DATE_COL] > self.df[D.DATE_COL].max()].head(n)
 
+    @property
+    def breakeven(self) -> float:
+        """Sales needed from $1 of ads to break even: 1.0 on revenue, 1/margin on profit."""
+        return 1.0 / self.gross_margin if self.gross_margin else 1.0
+
+    def _profit(self, plan: Plan) -> float | None:
+        return plan.total_sales * self.gross_margin - plan.total_budget if self.gross_margin else None
+
     def _require_data(self):
         if self.df is None:
             raise RuntimeError("No data loaded. Upload a CSV or load the demo dataset first.")
@@ -123,6 +135,15 @@ class Workspace:
     # ================================================================== #
     # TOOLS (each returns a JSON-serialisable dict)
     # ================================================================== #
+    def set_gross_margin(self, gross_margin: float | None) -> dict:
+        """Set the gross margin (0-1) so recommendations are judged on profit, not just revenue."""
+        if gross_margin is not None and not 0 < gross_margin <= 1:
+            return {"error": "gross_margin must be between 0 and 1 (e.g. 0.55 for 55%)."}
+        self.gross_margin = gross_margin
+        self.log_event("gross_margin_set", gross_margin=gross_margin)
+        return {"gross_margin": gross_margin, "breakeven_sales_per_ad_dollar": _r(self.breakeven, 3),
+                "meaning": f"A channel pays for itself only if $1 of ads brings at least ${self.breakeven:.2f} of sales."}
+
     def check_data(self) -> dict:
         self._require_data()
         return D.quality_report(self.df)
@@ -162,36 +183,48 @@ class Workspace:
 
     def get_channel_performance(self) -> dict:
         self._require_model()
-        s = self.model.channel_summary(self.df)
+        s = self.model.channel_summary(self.df, breakeven=self.breakeven)
         rows = []
         for r in s.itertuples():
             rows.append({
                 "channel": r.channel, "roi": _r(r.roi, 3), "marginal_roi_now": _r(r.marginal_roi, 3),
                 "share_of_spend": _r(r.share_of_spend, 3), "share_of_media_sales": _r(r.share_of_media_sales, 3),
                 "current_weekly_spend": _r(r.current_weekly_spend), "saturation_pct": _r(r.saturation_pct, 3),
-                "weekly_spend_where_next_dollar_returns_below_1": _r(r.saturation_weekly_spend),
+                "weekly_spend_where_next_dollar_stops_paying_off": _r(r.saturation_weekly_spend),
                 "ad_effect_lasts_weeks": _r(r.carryover_weeks, 1),
-                "status": ("saturated" if r.saturation_pct > SATURATION_ALERT or r.marginal_roi < MROI_ALERT
+                "status": ("saturated" if r.saturation_pct > SATURATION_ALERT or r.marginal_roi < self.breakeven
                            else "room to grow"),
             })
+            if self.gross_margin:
+                rows[-1]["profit_per_ad_dollar"] = _r(r.roi * self.gross_margin - 1, 3)
         dec = self.model.decompose(self.df)
         media = float(dec[self.model.channels].sum().sum())
         return {
             "channels": rows,
             "best_channel_by_roi": rows[0]["channel"], "worst_channel_by_roi": rows[-1]["channel"],
             "media_driven_share_of_sales": _r(media / float(self.df[D.TARGET_COL].sum()), 3),
-            "note": "roi = sales per $ historically; marginal_roi_now = sales from the NEXT $ at today's spend.",
+            "gross_margin": self.gross_margin,
+            "breakeven_sales_per_ad_dollar": _r(self.breakeven, 3),
+            "note": "roi = sales per $ historically; marginal_roi_now = sales from the NEXT $ at today's spend."
+                    + ("" if self.gross_margin else " No gross margin set: results are revenue, not profit."),
         }
 
     def optimize_budget(self, total_budget: float, n_weeks: int = 13, min_spend: dict | None = None,
-                        max_spend: dict | None = None, max_change_pct: float | None = None) -> dict:
+                        max_spend: dict | None = None, max_change_pct: float | None = None,
+                        goal: str = "max_sales") -> dict:
+        """goal="max_sales" spends the whole budget; goal="max_profit" (needs a gross margin) treats the budget
+        as a cap and stops spending where the next dollar no longer pays for itself."""
         self._require_model()
+        if goal == "max_profit" and not self.gross_margin:
+            return {"error": "goal=max_profit needs a gross margin. Call set_gross_margin first (ask the user)."}
         self.last_goal = {"total_budget": total_budget, "n_weeks": n_weeks, "min_spend": min_spend or {},
-                          "max_spend": max_spend or {}, "max_change_pct": max_change_pct}
+                          "max_spend": max_spend or {}, "max_change_pct": max_change_pct, "goal": goal}
         cur = evaluate_plan(self.model, current_allocation(self.model, total_budget, df=self.df), n_weeks, "current split")
         best = optimize(self.model, total_budget, n_weeks, min_spend=min_spend, max_spend=max_spend,
                         max_change_vs=cur.allocation if max_change_pct is not None else None,
-                        max_change_pct=max_change_pct)
+                        max_change_pct=max_change_pct,
+                        goal="min_budget_for_roi" if goal == "max_profit" else "max_sales",
+                        target_roi=self.breakeven if goal == "max_profit" else None)
         best.name = "recommended"
         self.scenarios["current split"] = cur
         self.scenarios["recommended"] = best
@@ -212,6 +245,11 @@ class Workspace:
             "expected_total_sales_incl_baseline": _r(baseline + best.total_sales),
             "biggest_moves": explain_shifts(self.model, cur, best),
             "constraints_applied": {k: v for k, v in self.last_goal.items() if v},
+            **({"gross_margin": self.gross_margin,
+                "recommended_profit": _r(self._profit(best)), "current_split_profit": _r(self._profit(cur)),
+                "profit_uplift_vs_current": _r(self._profit(best) - self._profit(cur)),
+                "unspent_budget": _r(total_budget - best.total_budget)} if self.gross_margin else
+               {"note": "No gross margin set: figures are revenue. Ask for the margin to judge profit."}),
         }
 
     def run_what_if(self, changes: dict, base: str = "current split", reallocate: bool = False,
@@ -228,8 +266,10 @@ class Workspace:
         b = self.scenarios[base]
         p = what_if(self.model, b.allocation, b.n_weeks, {k: float(v) for k, v in changes.items()}, reallocate)
         self.scenarios[p.name] = p
+        extra = ({"profit": _r(self._profit(p)), "profit_change_vs_base": _r(self._profit(p) - self._profit(b))}
+                 if self.gross_margin else {})
         return {
-            "scenario": p.name, "base": base, "result": p.to_dict(),
+            "scenario": p.name, "base": base, "result": p.to_dict(), **extra,
             "sales_change_vs_base": _r(p.total_sales - b.total_sales),
             "sales_change_vs_base_pct": _r(p.total_sales / b.total_sales - 1, 4) if b.total_sales else None,
             "budget_change_vs_base": _r(p.total_budget - b.total_budget),
@@ -256,10 +296,13 @@ class Workspace:
                                "message": f"{r['channel']} is {r['saturation_pct']:.0%} saturated at "
                                           f"${r['current_weekly_spend']:,.0f}/week; extra spend there returns "
                                           f"${r['marginal_roi_now']:.2f} per $1."})
-            elif r["marginal_roi_now"] is not None and r["marginal_roi_now"] < MROI_ALERT:
+            elif r["marginal_roi_now"] is not None and r["marginal_roi_now"] < self.breakeven:
+                why = (f" (break-even at a {self.gross_margin:.0%} margin is ${self.breakeven:.2f})"
+                       if self.gross_margin else "")
                 alerts.append({"severity": "warning", "channel": r["channel"], "type": "low_marginal_return",
-                               "message": f"The next $1 on {r['channel']} returns only ${r['marginal_roi_now']:.2f} in sales."})
-            elif r["marginal_roi_now"] and r["marginal_roi_now"] > 2.0:
+                               "message": f"The next $1 on {r['channel']} returns only ${r['marginal_roi_now']:.2f} "
+                                          f"in sales{why}."})
+            elif r["marginal_roi_now"] and r["marginal_roi_now"] > 2.0 * self.breakeven:
                 alerts.append({"severity": "info", "channel": r["channel"], "type": "opportunity",
                                "message": f"{r['channel']} has room to grow: the next $1 returns "
                                           f"${r['marginal_roi_now']:.2f}."})
@@ -361,7 +404,11 @@ class Workspace:
         if self.last_goal:
             g = self.last_goal
             res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
-                                       g.get("max_spend") or None, g.get("max_change_pct"))
+                                       g.get("max_spend") or None, g.get("max_change_pct"),
+                                       g.get("goal", "max_sales"))
+            if "error" in res:
+                res = self.optimize_budget(g["total_budget"], g["n_weeks"], g.get("min_spend") or None,
+                                           g.get("max_spend") or None, g.get("max_change_pct"))
             new_alloc = res["recommended"]["allocation"]
             out["new_recommendation"] = {"allocation": new_alloc,
                                          "expected_incremental_sales": res["recommended"]["total_incremental_sales"]}

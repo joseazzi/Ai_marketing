@@ -20,6 +20,12 @@ TOOLS = [
         }, "required": ["goal", "steps"]},
     },
     {
+        "name": "set_gross_margin",
+        "description": "Set the company's gross margin (0-1, e.g. 0.55) so ROI, alerts and plans are judged on PROFIT. "
+                       "Only use a margin the user gave you; never assume one.",
+        "parameters": {"type": "object", "properties": {"gross_margin": {"type": "number"}}, "required": ["gross_margin"]},
+    },
+    {
         "name": "check_data",
         "description": "Data-quality report: weeks, date range, channels, controls, issues and warnings. Run before modelling.",
         "parameters": {"type": "object", "properties": {}},
@@ -47,6 +53,8 @@ TOOLS = [
             "min_spend": {**_CHANNEL_MAP, "description": "Minimum TOTAL spend per channel for the period."},
             "max_spend": {**_CHANNEL_MAP, "description": "Maximum TOTAL spend per channel for the period."},
             "max_change_pct": {"type": "number", "description": "Limit each channel to +/- this fraction of its current budget (0.3 = 30%)."},
+            "goal": {"type": "string", "enum": ["max_sales", "max_profit"],
+                     "description": "max_sales spends the full budget; max_profit (needs set_gross_margin) treats it as a cap."},
         }, "required": ["total_budget"]},
     },
     {

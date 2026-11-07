@@ -72,7 +72,15 @@ with st.sidebar:
         tmpl = D.simulate(weeks=8).data.to_csv(index=False)
         st.download_button("Download CSV template", tmpl, "template.csv", use_container_width=True)
 
-    st.subheader("2 · OpenAI")
+    st.subheader("2 · Profit")
+    gm = st.number_input("Gross margin (%)", 0, 100, int(round((ws.gross_margin or 0) * 100)),
+                         help="Share of each sale kept after product costs. 0 = unknown: results stay in revenue.")
+    if (gm / 100 or None) != ws.gross_margin:
+        ws.set_gross_margin(gm / 100 if gm else None)
+    st.caption(f"Break-even: ${ws.breakeven:.2f} of sales per $1 of ads" if ws.gross_margin
+               else "No margin set: results are revenue, not profit.")
+
+    st.subheader("3 · OpenAI")
     if not os.getenv("OPENAI_API_KEY"):
         k = st.text_input("API key", type="password", help="Or set OPENAI_API_KEY in .env")
         if k:
@@ -269,6 +277,9 @@ with tabs[3]:
         budget = c[0].number_input("Total budget ($)", 1000, 100_000_000, 100_000, step=5000)
         weeks = c[1].number_input("Period (weeks)", 1, 52, 13)
         mc = c[2].number_input("Max change per channel vs current (%, 0 = no limit)", 0, 500, 0)
+        goal = st.radio("Goal", ["Maximize sales (spend the full budget)", "Maximize profit (budget is a cap)"],
+                        horizontal=True, disabled=not ws.gross_margin,
+                        help="Profit mode needs a gross margin in the sidebar.")
         cons = pd.DataFrame({"channel": ws.model.channels, "min_total": 0.0, "max_total": float(budget)})
         cons = st.data_editor(cons, disabled=["channel"], hide_index=True, use_container_width=True)
         if st.button("Optimize", type="primary"):
@@ -277,7 +288,11 @@ with tabs[3]:
                     float(budget), int(weeks),
                     {r.channel: r.min_total for r in cons.itertuples() if r.min_total > 0} or None,
                     {r.channel: r.max_total for r in cons.itertuples() if r.max_total < budget} or None,
-                    mc / 100 if mc else None)
+                    mc / 100 if mc else None,
+                    "max_profit" if goal.startswith("Maximize profit") and ws.gross_margin else "max_sales")
+                if "error" in st.session_state.opt:
+                    st.error(st.session_state.opt["error"])
+                    st.session_state.opt = None
             except Exception as e:
                 st.error(str(e))
         opt = st.session_state.get("opt")
@@ -287,6 +302,12 @@ with tabs[3]:
                         f"{opt['uplift_vs_current_pct']:+.1%} vs current split")
             k[1].metric("Media ROI", f"{opt['recommended']['roi']:.2f}", f"{opt['recommended']['roi'] - opt['current_split']['roi']:+.2f}")
             k[2].metric("Uplift", money(opt["uplift_vs_current"]))
+            if opt.get("recommended_profit") is not None:
+                k = st.columns(3)
+                k[0].metric("Profit from ads (after margin)", money(opt["recommended_profit"]),
+                            f"{opt['profit_uplift_vs_current']:+,.0f} vs current split")
+                k[1].metric("Current split profit", money(opt["current_split_profit"]))
+                k[2].metric("Budget left unspent", money(opt["unspent_budget"]))
             comp = pd.DataFrame({"current split": opt["current_split"]["allocation"],
                                  "recommended": opt["recommended"]["allocation"]}).reset_index(names="channel")
             st.plotly_chart(px.bar(comp.melt(id_vars="channel", var_name="plan", value_name="budget"),

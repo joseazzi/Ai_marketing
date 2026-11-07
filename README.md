@@ -63,7 +63,16 @@ python scripts/prepare_conjura.py conjura_mmm_data.csv --list
 python scripts/prepare_conjura.py conjura_mmm_data.csv --brand <id> -o data/my_brand.csv
 ```
 
-Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget, the optimized plan gives **+7.7%** expected sales (+5.5% at ±20%). Without limits the model suggests much larger moves. Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included.
+Results on the real brand: in-sample R² 0.97; 13-week holdout R² **0.90**, MAPE **8.2%**. For a $500K quarter with each channel limited to ±30% of its current budget, the optimized plan gives **+7.7%** expected sales (+5.5% at ±20%). Without limits the model suggests much larger moves. Treat those with caution, because real data is noisier and channels move together. Four other brands in the dataset fitted poorly (negative holdout R²), so they aren't included. I also tested adding the brand's direct, organic-search and email clicks as extra drivers. Every combination made the holdout prediction slightly worse (R² 0.88–0.89 vs 0.90), so they aren't used. Ads partly cause those visits, so they aren't true outside factors.
+
+### Data still missing (needs the partner company)
+
+| Missing | Why it matters |
+|---|---|
+| Gross margin | Turns revenue into profit (see Profit mode) |
+| Offline spend (TV, radio, print, out-of-home) | The real brand is online-only, so TV/radio exist only in the simulated data |
+| Prices, competitor activity, stock-outs, product launches | Non-ad drivers. Without them the model gives ads too much credit (about 94% of sales here) |
+| Lift tests / experiments | The only way to check each channel's ROI on real data, not just overall accuracy |
 
 ## How it works
 
@@ -82,6 +91,18 @@ app.py         → Streamlit dashboard: Agent, Data, Model, Optimizer, What-if, 
 **Model.** Geometric adstock (carry-over) and Hill saturation for each channel, plus trend, Fourier seasonality and controls. Differential evolution searches the nonlinear parameters, and bounded least squares solves the linear ones exactly (media effects ≥ 0). Optional recency weighting gives recent weeks more say.
 
 **Saturation point** = the weekly spend beyond which the next $1 returns less than $1 in sales.
+
+## Profit mode (gross margin)
+
+An ROI of 2.0 sounds good, but at a 40% gross margin each $1 of ads only brings back $0.80 of profit. Set the margin in the sidebar, in `.env` (`GROSS_MARGIN=0.55`), or tell the agent ("our margin is 55%"). Once it's set:
+
+- break-even becomes 1/margin of sales per ad dollar, and alerts and saturation points use it;
+- each channel shows its profit per ad dollar;
+- the optimizer can **maximize profit**: the budget becomes a cap, and it stops spending where the next dollar no longer pays for itself.
+
+There's no default margin. A real margin has to come from the company, because public benchmarks vary too much (general retail is around 33%).
+
+On the real brand, with each channel limited to ±30%, the result depends heavily on the margin. At 40% the current split *loses* $11K of profit over a quarter, and the profit plan makes +$57K while spending $427K of the $500K. At 55%, the current split makes $172K and the profit plan $238K. Facebook and Google Search don't pay for themselves at any margin from 40% to 70%.
 
 ## Results on the demo data (reproducible: `python -m budget_agent.cli evaluate`)
 
