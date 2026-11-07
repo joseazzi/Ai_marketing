@@ -15,12 +15,26 @@ An AI agent that decides how to split a marketing budget across channels so each
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # put your OPENAI_API_KEY in it
-streamlit run app.py          # dashboard + chat
+python -m budget_agent.server # open http://localhost:8000
 ```
 
-In the sidebar, click **Load demo data**, then ask the agent: *"I have $100K for Q1. How should I spend it?"*
+Go to **Data** → **Load demo**, then open **Agent** and ask: *"I have $100K for Q1. How should I spend it?"*
 
-Without an API key, everything still works except the free-form chat. The **Autopilot** button runs the same plan → model → optimize → alert → plan-file workflow without an LLM.
+Without an API key, everything works except the free-form chat. The **Autopilot** card runs the same plan → model → optimize → alert → plan-file workflow without an LLM. You can also paste the key in **Settings**; it's kept in memory until the server stops.
+
+### The web app (React)
+
+Pages: **Agent** (chat with live plan, tool steps and a number check), **Data**, **Channel insights**, **Optimizer**, **What-if**, **Monitoring** and **Evaluation**. The built app (`frontend/dist`) is committed, so Node.js isn't needed to run it. To change the front end:
+
+```bash
+cd frontend && npm install
+npm run dev        # http://localhost:5173, live reload; keep the Python server running for the API
+npm run build      # rebuild frontend/dist
+```
+
+Stack: React 19, TypeScript, Vite, Tailwind CSS 4, Recharts and lucide icons. The API is FastAPI (`budget_agent/server.py`), and the chat streams each tool step as it happens.
+
+The older Streamlit dashboard still works: `streamlit run app.py`.
 
 ### Command line
 
@@ -85,7 +99,9 @@ workspace.py   → persistent state + the tools the agent calls
 tools.py       → OpenAI tool schemas + dispatcher
 agent.py       → LLM loop: plan → tools → act → grounding check → answer
 autopilot.py   → same workflows without an LLM (offline / scheduled)
-app.py         → Streamlit dashboard: Agent, Data, Model, Optimizer, What-if, Monitoring, Evaluation
+server.py      → FastAPI: JSON API for every tool + streaming chat; serves the React app
+frontend/      → React web app (Vite + TypeScript + Tailwind)
+app.py         → older Streamlit dashboard
 ```
 
 **Model.** Geometric adstock (carry-over) and Hill saturation for each channel, plus trend, Fourier seasonality and controls. Differential evolution searches the nonlinear parameters, and bounded least squares solves the linear ones exactly (media effects ≥ 0). Optional recency weighting gives recent weeks more say.

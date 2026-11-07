@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-slate-50 text-slate-800 antialiased; }
+
+.prose-chat p { @apply my-2 leading-relaxed; }
+.prose-chat ul { @apply my-2 list-disc pl-5 space-y-1; }
+.prose-chat ol { @apply my-2 list-decimal pl-5 space-y-1; }
+.prose-chat strong { @apply font-semibold text-slate-900; }
+.prose-chat table { @apply my-3 w-full text-sm border-collapse; }
+.prose-chat th { @apply text-left font-semibold border-b border-slate-200 py-1.5 pr-3; }
+.prose-chat td { @apply border-b border-slate-100 py-1.5 pr-3; }
+.prose-chat code { @apply rounded bg-slate-100 px-1 py-0.5 text-[0.85em]; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { @apply font-semibold text-slate-900 mt-3 mb-1; }
+
+@keyframes fadein { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+.fade-in { animation: fadein .25s ease-out; }
