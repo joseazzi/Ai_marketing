@@ -67,7 +67,10 @@ TOOLS = [
     },
     {
         "name": "run_what_if",
-        "description": "Test a scenario: apply relative changes to a base plan, e.g. {\"tv\": -0.3} = cut TV by 30%.",
+        "description": "Test a scenario: apply relative changes to a base plan, e.g. {\"tv\": -0.3} = cut TV by 30%. "
+                       "Returns a verdict (better / worse / about the same, on profit if a margin is set, else sales), "
+                       "the change, channels_changed with next-dollar returns before/after, and with a margin the "
+                       "channels pushed below break-even.",
         "parameters": {"type": "object", "properties": {
             "changes": {"type": "object", "additionalProperties": {"type": "number"},
                         "description": "channel -> relative change (-0.3 = -30%, 0.5 = +50%)."},

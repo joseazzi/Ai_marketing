@@ -316,14 +316,22 @@ class Workspace:
         funded = [c for c, v in plan.allocation.items() if v > 1]
         if not funded:
             return None
-        rets = [plan.marginal_roi[c] for c in funded]
-        lo, hi = min(rets), max(rets)
-        if lo >= self.breakeven:
+        below = [c for c in funded if plan.marginal_roi[c] < self.breakeven]
+        if not below:
             return None
-        ret_txt = f"${lo:.2f}" if hi - lo < 0.01 else f"between ${lo:.2f} and ${hi:.2f}"
-        note = (f"At the plan's spend the next $1 returns {ret_txt} in sales, below break-even "
-                f"${self.breakeven:.2f} at a {self.gross_margin:.0%} gross margin: the last dollars lose money. "
-                f"This plan's profit from ads is ${self._profit(plan):,.0f}.")
+        paying = [c for c in funded if c not in below]
+        be = f"break-even ${self.breakeven:.2f} at a {self.gross_margin:.0%} gross margin"
+        if not paying:
+            rets = [plan.marginal_roi[c] for c in funded]
+            lo, hi = min(rets), max(rets)
+            ret_txt = f"${lo:.2f}" if hi - lo < 0.01 else f"between ${lo:.2f} and ${hi:.2f}"
+            note = (f"On every channel the plan's next $1 returns {ret_txt} in sales, below {be}: "
+                    f"the last dollars lose money.")
+        else:
+            listed = ", ".join(f"{c} ${plan.marginal_roi[c]:.2f}" for c in sorted(below, key=plan.marginal_roi.get))
+            note = (f"At the plan's spend, the next $1 returns less than {be} on: {listed}. The last dollars on "
+                    f"these channels lose money; the other channels ({', '.join(paying)}) still pay off.")
+        note += f" This plan's profit from ads is ${self._profit(plan):,.0f}."
         try:
             alt = optimize(self.model, budget, n_weeks, min_spend=min_spend, max_spend=max_spend,
                            max_change_vs=cur.allocation if max_change_pct is not None else None,
@@ -350,12 +358,36 @@ class Workspace:
         self.scenarios[p.name] = p
         extra = ({"profit": _r(self._profit(p)), "profit_change_vs_base": _r(self._profit(p) - self._profit(b))}
                  if self.gross_margin else {})
-        return {
-            "scenario": p.name, "base": base, "result": p.to_dict(), **extra,
+        # verdict on profit when a margin is set, else on sales; "about the same" within 0.5% of the base value
+        metric = "profit" if self.gross_margin else "sales"
+        new_v, base_v = (self._profit(p), self._profit(b)) if self.gross_margin else (p.total_sales, b.total_sales)
+        delta = new_v - base_v
+        verdict = ("about the same" if abs(delta) < 0.005 * max(abs(base_v), 1.0)
+                   else "better" if delta > 0 else "worse")
+        moved = {c: {"base_allocation": _r(b.allocation[c]), "new_allocation": _r(p.allocation[c]),
+                     "base_marginal_roi": _r(b.marginal_roi[c], 3), "new_marginal_roi": _r(p.marginal_roi[c], 3)}
+                 for c in p.allocation if abs(p.allocation[c] - b.allocation[c]) > 1}
+        out = {
+            "scenario": p.name, "base": base,
+            "verdict": verdict, "verdict_metric": metric, "verdict_change": _r(delta),
+            "result": p.to_dict(), **extra,
             "sales_change_vs_base": _r(p.total_sales - b.total_sales),
             "sales_change_vs_base_pct": _r(p.total_sales / b.total_sales - 1, 4) if b.total_sales else None,
             "budget_change_vs_base": _r(p.total_budget - b.total_budget),
+            "channels_changed": moved,
         }
+        if self.gross_margin:
+            out["breakeven_sales_per_ad_dollar"] = _r(self.breakeven, 3)
+            out["channels_below_breakeven"] = [
+                {"channel": c, "marginal_roi": _r(p.marginal_roi[c], 3)}
+                for c in p.allocation if p.allocation[c] > 1 and p.marginal_roi[c] < self.breakeven]
+        if base == "recommended" and self.last_goal:
+            goal = self.last_goal.get("goal", "max_sales")
+            out["base_optimised_for"] = goal
+            if (goal == "max_profit") == bool(self.gross_margin) or goal == "max_sales" and not self.gross_margin:
+                out["base_note"] = (f"The base plan was optimised for {metric}; a manual change can at best match it "
+                                    f"on {metric}, never beat it.")
+        return out
 
     def compare_scenarios(self, names: list[str] | None = None) -> dict:
         self._require_model()

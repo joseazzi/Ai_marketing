@@ -75,7 +75,18 @@ How you work:
    channels whose spend moves together are hard to separate (quote channels_hard_to_separate if not empty);
    (d) if is_simulated_demo is true, that the data is the simulated demo company, not real company data.
    Call fit_model or check_data first if you don't have these fields in this conversation.
-15. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
+15. COPY FIGURES EXACTLY: copy numbers from tool results. Round only by standard rounding of the tool value
+   (roi 1.505 -> "1.51" or "1.5"; 1.263 -> "1.26" or "1.3"), never re-estimate or write a nearby value. You may
+   repeat the user's own figures (their budget, minimums) exactly as they gave them.
+16. WHAT-IF ANSWERS: start with run_what_if's verdict ("better", "worse" or "about the same", on verdict_metric:
+   profit when a margin is set, else sales) and the change (verdict_change). Then give the reason: channels pushed
+   below break-even (channels_below_breakeven), or money moved to channels with a lower / higher next-dollar
+   return (channels_changed: base_marginal_roi -> new_marginal_roi). If base_note is present (the base was an
+   optimised plan), say the change cannot beat it. Never call a worse result "nearly neutral" without the reason.
+17. WORDING: optimize_budget's marginal_roi values (current_split, recommended, biggest_moves) are figures for the
+   plan's own spend; never call them "historical". Always write sales and profit amounts with $
+   (e.g. "$75,885 incremental sales").
+18. Be concise: a short summary, a compact table of the split, 2-4 reasons, next actions.
 """
 
 
@@ -116,6 +127,8 @@ class BudgetAgent:
         self.chat_lock = threading.Lock()
         self.max_turns_kept = max_turns_kept
         self.old_tool_chars = old_tool_chars
+        # full (never truncated) user messages and tool results of the kept turns, for the number check
+        self.grounding_turns: list[dict] = []
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-5-mini")
         self.max_tool_rounds = max_tool_rounds
         if client is None:
@@ -161,8 +174,22 @@ class BudgetAgent:
         with self.chat_lock:
             return self._ask(user_message, on_step)
 
+    def _grounding_pool(self, current_results: list) -> tuple[list, list[str]]:
+        """Everything the agent may quote: tool results of the kept turns (not truncated), stored scenarios,
+        the last saved recommendation, and the user's own messages."""
+        results = [r for t in self.grounding_turns for r in t["results"]] + list(current_results)
+        with self.tool_lock:
+            results += [p.to_dict() for p in getattr(self.ws, "scenarios", {}).values()]
+            recs = getattr(self.ws, "memory", {}).get("recommendations") or []
+            if recs:
+                results.append(recs[-1])
+        return results, [t["user"] for t in self.grounding_turns]
+
     def _ask(self, user_message: str, on_step=None) -> AgentResponse:
         self._compact_history()
+        keep = max(self.max_turns_kept - 1, 0)
+        self.grounding_turns = self.grounding_turns[-keep:] if keep else []
+        self.grounding_turns.append({"user": user_message, "results": []})
         with self.tool_lock:
             note = self._context_note()
         self.messages.append({"role": "system", "content": note})
@@ -194,6 +221,7 @@ class BudgetAgent:
                     step = AgentStep(tc.function.name, args, result, time.time() - t0)
                     steps.append(step)
                     tool_results.append(result)
+                    self.grounding_turns[-1]["results"].append(result)
                     if on_step:
                         on_step(step)
                     self.messages.append({"role": "tool", "tool_call_id": tc.id, "content": to_json(result)})
@@ -201,20 +229,23 @@ class BudgetAgent:
                 [s.tool for s in steps])
 
         answer = run_loop()
-        check = grounding.check(answer, tool_results)
+        pool, users = self._grounding_pool([])
+        check = grounding.check(answer, pool, user_texts=users)
         revised = False
-        if not check["passed"] and tool_results:
+        if not check["passed"]:
             self.messages.append({"role": "user", "content": (
                 "[internal check, invisible to the user] These figures in your last answer do not match any tool "
-                f"result: {check['ungrounded']}. Write the answer again for the user: fix or remove only those "
+                f"result or in the user's messages: {check['ungrounded']}. Write the answer again for the user: fix or remove only those "
                 "figures (call tools again if you need a number), keep the same structure, plain business language "
                 "and sensible rounding ($23.4K, 15%), and never show raw field names. Start directly with the answer: "
                 "do not say it was rewritten, checked or corrected.")})
             answer = _strip_meta(run_loop())
-            check = grounding.check(answer, tool_results)
+            pool, users = self._grounding_pool([])
+            check = grounding.check(answer, pool, user_texts=users)
             revised = True
         return AgentResponse(answer, plan, steps, check, revised)
 
     def reset(self) -> None:
         with self.chat_lock:  # waits for an answer in progress instead of mixing histories
             self.messages = self.messages[:1]
+            self.grounding_turns = []

@@ -35,6 +35,15 @@ NUM_RE = re.compile(
 # plain integers followed by these words are counts or periods, not model figures
 _UNIT_AFTER = re.compile(r"^\s*-?\s*(weeks?|wks?|months?|days?|years?|steps?|channels?|quarters?|scenarios?|"
                          r"figures?|alerts?|reasons?|actions?|options?|semaines?|mois|jours?)\b", re.I)
+# numbers that are parameters, not claims: `code spans`, dict literals {"tv": -0.1},
+# and (...) / {...} right after a snake_case tool or field name ("run_what_if(changes={...})")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+_DICT_LIT = re.compile(r"\{[^{}\n]*:[^{}\n]*\}")
+_TOOL_ARGS = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b[^\n({]{0,30}?[({][^(){}\n]*[)}]")
+_USER_WEEKS = re.compile(r"(\d+)\s*(?:weeks?|wks?|semaines?)\b", re.I)
+_QUARTER = re.compile(r"\b(?:q[1-4]|quarter|trimestre)\b", re.I)
+_RATIO_MAX = 20  # plain numbers below this (no $, no %) are ratios: compared with the written precision only
+
 _REL_TOL = 1e-6  # float noise only; rounding is handled by the claim's own precision
 
 
@@ -95,9 +104,17 @@ def _interpretations(token: str, suffix: str, english_only: bool = False) -> lis
     return out
 
 
-def extract_claims(text: str) -> list[tuple[str, list[tuple[float, float]], str]]:
-    """Figures in the text as (raw text, [(value, precision), ...], suffix)."""
+def _mask_parameters(text: str) -> str:
+    """Blank out parameter examples so their numbers are not checked as figures (positions are kept)."""
+    for rx in (_CODE_SPAN, _DICT_LIT, _TOOL_ARGS):
+        text = rx.sub(lambda m: " " * len(m.group(0)), text)
+    return text
+
+
+def extract_claims(text: str, skip_counts: bool = True) -> list[tuple[str, list[tuple[float, float]], str, bool]]:
+    """Figures in the text as (raw text, [(value, precision), ...], suffix, is_money)."""
     claims = []
+    text = _mask_parameters(text)
     for m in NUM_RE.finditer(text):
         raw = m.group(0).strip()
         suffix = (m.group(3) or "").lower()
@@ -107,7 +124,7 @@ def extract_claims(text: str) -> list[tuple[str, list[tuple[float, float]], str]
             continue
         v = readings[0][0]
         money = bool(m.group(1) or m.group(4))
-        if not money and suffix not in ("%", "k", "m") and len(readings) == 1 and v == int(v):
+        if skip_counts and not money and suffix not in ("%", "k", "m") and len(readings) == 1 and v == int(v):
             before = text[max(0, m.start() - 2):m.start()]
             line_start = text.rfind("\n", 0, m.start()) + 1
             if (abs(v) <= 12                                             # counts / option numbers: "1, 2, 3"
@@ -118,21 +135,42 @@ def extract_claims(text: str) -> list[tuple[str, list[tuple[float, float]], str]
                         and text[m.end():m.end() + 1] in (".", ")"))
                     or re.search(r"\d{4}-$", text[max(0, m.start() - 5):m.start()])):  # dates 2026-01-05
                 continue
-        claims.append((raw, readings, suffix))
+        claims.append((raw, readings, suffix, money))
     return claims
 
 
-def _close(claim: float, value: float, precision: float) -> bool:
-    return abs(abs(claim) - abs(value)) <= max(precision, abs(value) * _REL_TOL, 1e-9)
+def _close(claim: float, value: float, precision: float, rel_tol: float = _REL_TOL) -> bool:
+    # tiny epsilon so a value exactly half a unit away (1.505 written as 1.51) is not lost to float error
+    return abs(abs(claim) - abs(value)) <= max(precision * (1 + 1e-9), abs(value) * rel_tol, 1e-9)
 
 
-def check(answer: str, tool_results: list) -> dict:
+def _user_numbers(texts: list[str]) -> tuple[list[float], set[int]]:
+    """Figures the user wrote (exact values, K/M/% applied) and any period they stated in weeks."""
+    nums, weeks = [], set()
+    for t in texts or []:
+        for _, readings, suffix, _ in extract_claims(t, skip_counts=False):
+            for v, _ in readings:
+                nums.append(v)
+                if suffix == "%":
+                    nums.append(v / 100)
+        weeks.update(int(w) for w in _USER_WEEKS.findall(t) if 0 < int(w) <= 520)
+        if _QUARTER.search(t):
+            weeks.add(13)
+    return nums, weeks
+
+
+def check(answer: str, tool_results: list, user_texts: list[str] | None = None) -> dict:
+    """``tool_results``: every tool output the agent may quote (this and earlier turns, stored scenarios).
+    ``user_texts``: the user's messages in the conversation; their own figures may be repeated."""
     nums: list[float] = []
     weeks: set[int] = set()
     for r in tool_results:
         if isinstance(r, str) and r.startswith(("{", "[")):
             r = json.loads(r)
         _numbers_in(r, nums, weeks)
+    unums, uweeks = _user_numbers(user_texts)
+    nums += unums
+    weeks |= uweeks
     pool = sorted({round(n, 6) for n in nums})
     candidates = set(pool)
     candidates.update(n * 100 for n in pool)                       # fraction -> percent
@@ -141,9 +179,13 @@ def check(answer: str, tool_results: list) -> dict:
     cand = sorted(candidates)
 
     grounded, ungrounded = [], []
-    for raw, readings, suffix in extract_claims(answer):
+    for raw, readings, suffix, money in extract_claims(answer):
         targets = list(readings) + ([(v / 100, p / 100) for v, p in readings] if suffix == "%" else [])
-        ok = any(_close(t, c, p) for t, p in targets for c in cand)
+        if not money and suffix == "" and all(abs(v) < _RATIO_MAX for v, _ in readings):
+            # a ratio (ROI, next-$ return): must be a standard rounding of a raw tool value, nothing derived
+            ok = any(_close(t, c, p, rel_tol=0) for t, p in targets for c in pool)
+        else:
+            ok = any(_close(t, c, p) for t, p in targets for c in cand)
         (grounded if ok else ungrounded).append(raw)
     total = len(grounded) + len(ungrounded)
     return {

@@ -103,6 +103,13 @@ def quality_report(df: pd.DataFrame) -> dict:
     ]
     if collinear:
         warnings.append(f"Highly correlated channel pairs (hard to separate): {collinear}")
+    moderate = [
+        (chans[i], chans[j], round(float(corr.iloc[i, j]), 2))
+        for i in range(len(chans)) for j in range(i + 1, len(chans))
+        if corr.iloc[i, j] <= 0.85 and round(float(corr.iloc[i, j]), 2) >= 0.8  # compared as displayed (0.80)
+    ]
+    if moderate:
+        warnings.append(f"Moderately correlated channel pairs (harder to separate): {moderate}")
 
     z = (df[TARGET_COL] - df[TARGET_COL].mean()) / (df[TARGET_COL].std() or 1)
     outliers = int((z.abs() > 4).sum())
