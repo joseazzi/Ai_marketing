@@ -3,6 +3,7 @@
 Uses a scripted fake OpenAI client, as in tests/test_review_fixes.py.
 """
 import json
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import numpy as np
@@ -145,7 +146,7 @@ def test_wording_rules_in_prompt():
 
 # 8. moderate correlation is reported --------------------------------------------------------
 def test_moderate_and_high_correlation_warnings():
-    real = quality_report(load_csv("data/real_apparel_brand_usd.csv"))
+    real = quality_report(load_csv(Path(__file__).resolve().parent.parent / "data" / "real_apparel_brand_usd.csv"))
     assert any("Moderately correlated" in w and "meta_instagram" in w for w in real["warnings"])
     rng = np.random.default_rng(0)
     base = rng.lognormal(0, 0.5, 120)
