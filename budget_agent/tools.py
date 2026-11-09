@@ -32,7 +32,10 @@ TOOLS = [
     },
     {
         "name": "fit_model",
-        "description": "Train the Media Mix Model (adstock + saturation) on the current data. Returns R², MAPE and ROI by channel.",
+        "description": "Train the Media Mix Model (adstock + saturation) on the current data. Returns in-sample R² and "
+                       "MAPE, holdout_accuracy (R² and MAPE on the last 13 weeks when trained without them), the "
+                       "data period, the data source (is_simulated_demo), channels that are hard to separate, and "
+                       "ROI by channel. Use it to answer 'what is this based on / how reliable is it'.",
         "parameters": {"type": "object", "properties": {
             "recency_halflife_weeks": {"type": "number", "description": "Weight recent weeks more (half-life in weeks). Omit for the default."},
             "from_scratch": {"type": "boolean", "description": "Ignore the previous model (default: update it with the new evidence)."},

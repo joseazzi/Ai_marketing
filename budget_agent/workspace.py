@@ -102,6 +102,8 @@ class Workspace:
         self.model = None
         (self.root / "model.json").unlink(missing_ok=True)
         self.scenarios = {}
+        self.memory["data_source"] = source
+        self.memory.pop("holdout", None)
         self.log_event("data_loaded", source=source, weeks=len(self.df))
         return self.check_data()
 
@@ -153,9 +155,34 @@ class Workspace:
         return {"gross_margin": gross_margin, "breakeven_sales_per_ad_dollar": _r(self.breakeven, 3),
                 "meaning": f"A channel pays for itself only if $1 of ads brings at least ${self.breakeven:.2f} of sales."}
 
+    @property
+    def data_source(self) -> str:
+        return self.memory.get("data_source", "unknown")
+
+    @property
+    def is_simulated(self) -> bool:
+        return self.data_source.startswith("simulated")
+
     def check_data(self) -> dict:
         self._require_data()
-        return D.quality_report(self.df)
+        return {**D.quality_report(self.df), "data_source": self.data_source,
+                "is_simulated_demo": self.is_simulated}
+
+    def _holdout(self, halflife) -> dict | None:
+        """Accuracy on the last 13 weeks when the model is trained without them (cached per dataset)."""
+        from .evaluation import holdout_accuracy
+        key = {"weeks": len(self.df), "data_end": str(self.df[D.DATE_COL].max().date()), "halflife": halflife}
+        cached = self.memory.get("holdout")
+        if cached and cached.get("key") == key:
+            return cached["result"]
+        if len(self.df) < 65:  # too short to hide 13 weeks and still train
+            return None
+        h = holdout_accuracy(self.df, test_weeks=13, recency_halflife=halflife or None, maxiter=self.mmm_maxiter)
+        result = {"test_weeks": 13, "holdout_r2": _r(h["test_r2"], 3), "holdout_mape": _r(h["test_mape"], 4),
+                  "meaning": "accuracy on the last 13 weeks when the model is trained without them"}
+        self.memory["holdout"] = {"key": key, "result": result}
+        self._save_memory()
+        return result
 
     def fit_model(self, recency_halflife_weeks: float | None = None, from_scratch: bool = False) -> dict:
         self._require_data()
@@ -184,6 +211,15 @@ class Workspace:
             "recency_halflife_weeks": hl,
             "mode": "updated previous model with new evidence" if use_prior else "trained from scratch",
             "roi_by_channel": entry["roi"],
+            "data_period": {"start": str(self.df[D.DATE_COL].min().date()), "end": entry["data_end"],
+                            "weeks": len(self.df)},
+            "data_source": self.data_source,
+            "is_simulated_demo": self.is_simulated,
+            "holdout_accuracy": self._holdout(hl),
+            "how_effects_are_estimated": "Channel effects are estimated from past week-to-week variation in spend "
+                                         "and sales, not measured by experiments. Channels whose spend moves "
+                                         "together are hard to separate.",
+            "channels_hard_to_separate": [w for w in q["warnings"] if "correlated" in w],
         }
         if previous is not None and len(self.memory["model_history"]) >= 2:
             prev = self.memory["model_history"][-2]["roi"]
@@ -238,6 +274,9 @@ class Workspace:
                         goal="min_budget_for_roi" if goal == "max_profit" else "max_sales",
                         target_roi=self.breakeven if goal == "max_profit" else None)
         best.name = "recommended"
+        profit_note = None
+        if self.gross_margin and goal == "max_sales":
+            profit_note = self._profit_note(best, total_budget, n_weeks, min_spend, max_spend, max_change_pct, cur)
         self.scenarios["current split"] = cur
         self.scenarios["recommended"] = best
         start = (self.df[D.DATE_COL].max() + pd.Timedelta(days=7)).date()
@@ -262,6 +301,7 @@ class Workspace:
                                      "no channel is forced to lose money. Use goal='max_sales' to keep every channel "
                                      "within +/-max_change_pct."}
                if goal == "max_profit" and max_change_pct is not None else {}),
+            **({"profit_note": profit_note} if profit_note else {}),
             "marginal_roi_basis": "current_split.marginal_roi and recommended.marginal_roi are the sales from the next $ "
                                   "at each plan's own weekly spend for this budget (use these to explain the plan).",
             **({"gross_margin": self.gross_margin,
@@ -270,6 +310,29 @@ class Workspace:
                 "unspent_budget": _r(total_budget - best.total_budget)} if self.gross_margin else
                {"note": "No gross margin set: figures are revenue. Ask for the margin to judge profit."}),
         }
+
+    def _profit_note(self, plan: Plan, budget, n_weeks, min_spend, max_spend, max_change_pct, cur) -> str | None:
+        """Warn when a sales-maximising plan spends past break-even, and give the profit alternative."""
+        funded = [c for c, v in plan.allocation.items() if v > 1]
+        if not funded:
+            return None
+        rets = [plan.marginal_roi[c] for c in funded]
+        lo, hi = min(rets), max(rets)
+        if lo >= self.breakeven:
+            return None
+        ret_txt = f"${lo:.2f}" if hi - lo < 0.01 else f"between ${lo:.2f} and ${hi:.2f}"
+        note = (f"At the plan's spend the next $1 returns {ret_txt} in sales, below break-even "
+                f"${self.breakeven:.2f} at a {self.gross_margin:.0%} gross margin: the last dollars lose money. "
+                f"This plan's profit from ads is ${self._profit(plan):,.0f}.")
+        try:
+            alt = optimize(self.model, budget, n_weeks, min_spend=min_spend, max_spend=max_spend,
+                           max_change_vs=cur.allocation if max_change_pct is not None else None,
+                           max_change_pct=max_change_pct, goal="min_budget_for_roi", target_roi=self.breakeven)
+            note += (f" goal='max_profit' would give ${self._profit(alt):,.0f} profit spending "
+                     f"${alt.total_budget:,.0f} of the ${budget:,.0f}.")
+        except (ValueError, RuntimeError):
+            note += " A profit-maximising plan is not possible with these limits."
+        return note
 
     def run_what_if(self, changes: dict, base: str = "current split", reallocate: bool = False,
                     total_budget: float | None = None, n_weeks: int | None = None) -> dict:

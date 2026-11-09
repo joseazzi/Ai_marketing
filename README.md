@@ -108,6 +108,12 @@ app.py         → older Streamlit dashboard
 
 **Saturation point** = the weekly spend beyond which the next $1 returns less than $1 in sales.
 
+## How the agent explains its answers
+
+- **Where the plan comes from:** `optimize_budget` maximises the model's fitted response curves (sales as a function of spend per channel) under your budget and limits. Channel insights and saturation alerts only describe and report; they don't feed the optimiser, and the agent is told never to say they do.
+- **"What is this based on?"** The agent gives the data period and number of weeks, the in-sample R², and the accuracy on the last 13 weeks when the model is trained without them (`fit_model` returns this as `holdout_accuracy`, cached while the data doesn't change). It also says that channel effects are estimated from past variation rather than measured, which channels are hard to separate, and whether the data is the simulated demo.
+- **Next actions** it offers always map to a tool: re-run with limits, optimise for profit, run a what-if, compare scenarios, write the plan file, check alerts, ingest new weeks, set the margin. It never offers scheduling, handoff or deployment.
+
 ## What the number check guarantees
 
 `grounding.py` checks that every figure in the agent's answer was **copied from a tool result**, not invented. It does **not** check whether the agent's reasoning about those numbers is right.
@@ -123,6 +129,7 @@ An ROI of 2.0 sounds good, but at a 40% gross margin each $1 of ads only brings 
 - break-even becomes 1/margin of sales per ad dollar, and alerts and saturation points use it;
 - each channel shows its profit per ad dollar;
 - the optimizer can **maximize profit**: the budget becomes a cap, and it stops spending where the next dollar no longer pays for itself.
+- when you ask for the most *sales*, the answer also warns if the plan's last dollars lose money at your margin (`profit_note`), and says what the profit goal would give instead. Example (demo, 70% margin, $100K): the sales plan stops at $1.24 of sales per extra $1, below the $1.43 break-even. Maximising profit would make about $35K instead of $33K while spending about $75K.
 
 There's no default margin. A real margin has to come from the company, because public benchmarks vary too much (general retail is around 33%).
 
